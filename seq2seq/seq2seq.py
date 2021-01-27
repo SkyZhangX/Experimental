@@ -17,9 +17,10 @@ import os
 
 class configs:
     epoch = 10
-    batch_size = 32
-    lr = 1e-5
-    decay = 0.97
+    batch_size = 1
+    lr = 2e-4
+    decay = 0.9
+    LTrain = 3
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -33,17 +34,19 @@ class Encoder(nn.Module):
         self.embedding = nn.Embedding(input_dim, emb_dim)
         
         self.rnn = nn.LSTM(emb_dim, hid_dim, n_layers, dropout = dropout)
+      
         
-        #self.dropout = nn.Dropout(dropout)
-        
-    def forward(self, src):
+    def forward(self,src,hidden,cell):
         
         #embedded = self.dropout(self.embedding(src))
-        embedded = self.embedding(src)
-        outputs, (hidden, cell) = self.rnn(embedded)
-        
-        return hidden, cell
+        output = self.embedding(src)
+        #output = output.unsqueeze(0)
+        outputs, (hidden, cell) = self.rnn(output,(hidden,cell))
+  
+        return outputs,hidden, cell
 
+    def initHidden(self):
+        return torch.zeros(1, 1, self.hid_dim, device=device)
 
 class Decoder(nn.Module):
     def __init__(self, output_dim, emb_dim, hid_dim, n_layers, dropout):
@@ -59,10 +62,7 @@ class Decoder(nn.Module):
         
         self.fc_out = nn.Linear(hid_dim, output_dim)
         
-        #self.dropout = nn.Dropout(dropout)
-        
-       
-        self.softmax = nn.Softmax(dim=1)
+     
 
     def forward(self, inputx, hidden, cell):
         
@@ -71,7 +71,7 @@ class Decoder(nn.Module):
         #embedded = self.dropout(self.embedding(inputx))
         embedded = self.embedding(inputx)
         output, (hidden, cell) = self.rnn(embedded, (hidden, cell))
-       
+        
         pred = self.fc_out(output.squeeze(0))
         
         return pred, hidden, cell
@@ -95,29 +95,35 @@ class Seq2Seq(nn.Module):
         batch_size = trg.shape[1]
         trg_len = trg.shape[0]
         trg_vocab_size = len(vec)#self.decoder.output_dim
-        
+        hidden = self.encoder.initHidden()
+        cell = self.encoder.initHidden()
         #initialize a list of output, matching input dim
         outputs = torch.zeros(trg_len, batch_size, trg_vocab_size).to(self.device)
-        
-        #encoder output to context vector
-        hidden, cell = self.encoder(src)
-        
+        output,hidden,cell = self.encoder(src,hidden,cell)
+        print(output)
+        sys.exit()
         #<sos> first in 
         input = trg[0,:]
-        
+        #print(input)
+        #sys.exit()
         #initialize <eos> of encoder, <sos> of decoder
         outputs[0,0,0] = 1
+        
         outputs[6,0,1] = 1
         for t in range(1, trg_len-1):
-        
             output, hidden, cell = self.decoder(input, hidden, cell)
-
             outputs[t] = output
-            best = output.argmax(1) 
-            
+            best = output.argmax(1)
+            print(input)
             #0 for use real output, 1 for use best model output 
             input = trg[t] if random.random() > teacher_forcing_ratio else best
-            #print(input)
+            #sys.exit()
+            input = output
+            '''
+            if input[0] == 1:
+                break
+            '''
+            #sys.exit()
         '''
         print("\n")
         print(t)
@@ -128,8 +134,7 @@ class Seq2Seq(nn.Module):
 
 
 
-def char2vec(word_list):
-    vec = {'\t':0,'\n':1}
+def char2vec(word_list,vec = {'\t':0,'\n':1}):
     num = 2
     new_word_list = []
     for wl in word_list:
@@ -150,24 +155,47 @@ def tokenize(token: list) -> list:
     new_data = [list('\t'+tok) for tok in token]
     return new_data
 
-def load_data():
+def load_src_data():
     data_file = 'samples.txt'
+   
+    data_f = open(data_file,'r').readlines()
+    data_tokenization = tokenize(data_f)
+    encode, vec = char2vec(data_tokenization)
+
+    trg_file = 'target.txt'
+    trg_f = open(trg_file,'r').readlines()
+    trg_tokenization = tokenize(trg_f)
+    decode, _   = char2vec(trg_tokenization,vec)
+    train_length = configs.LTrain
+    
+  
+    return (encode[:train_length], decode[:train_length]),(encode[:train_length], decode[:train_length]), vec
+
+(data_train, trg_train),(data_test,trg_test), vec = load_src_data()
+
+cat_training = torch.cat((data_train.unsqueeze(0),trg_train.unsqueeze(0)),dim=0)
+cat_test =  torch.cat((data_test.unsqueeze(0),trg_test.unsqueeze(0)),dim=0)
+ 
+
+'''
+def load_trg_data(vec):
+    data_file = 'target.txt'
     f = open(data_file,'r').readlines()
     tokenization = tokenize(f)
-    encode, vec = char2vec(tokenization)
-    return encode[:600],encode[600:800],encode[800:], vec
+    decode, vec = char2vec(tokenization,vec)
+    return decode[:5],decode[600:800],decode[800:]#, vec
 
-data_train, data_val, data_test, vec = load_data()
+test_train, test_val, test_test = load_trg_data(vec)
+print(test_train)
+sys.exit()
+'''
 
-print(data_train.shape)
-
-epoch = 20
 
 INPUT_DIM = len(vec)
 OUTPUT_DIM = len(vec)
-ENC_EMB_DIM = 30
-DEC_EMB_DIM = 30
-HID_DIM = 16
+ENC_EMB_DIM = 100
+DEC_EMB_DIM = 100
+HID_DIM = 100
 N_LAYERS = 1
 ENC_DROPOUT = 0.1
 DEC_DROPOUT = 0.1
@@ -186,28 +214,38 @@ def training(data,eval_data):
     config = configs()
     #model.train()
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(),lr = config.lr , weight_decay = config.decay)
+    optimizer = optim.SGD(model.parameters(),lr = config.lr , weight_decay = config.decay)
     best_acc = 0
-    for _ in range(epoch):
+    for _ in range(config.epoch):
         model.train()
-        for _, texts in tqdm(enumerate(data),total=600,position=0,leave=True):
+       # print('\nDATA',data)
+        for _, (texts,trg) in tqdm(enumerate(data),total = configs.LTrain,leave=True):
+        #for texts in data:
+            '''
+            print('\nsrc',texts)
+            print('trg',trg)
+            
+            #sys.exit()
+            '''
             texts = texts.unsqueeze(1)
+            trg = trg.unsqueeze(1)
             #print(texts.shape)
             optimizer.zero_grad()
-            output = model(texts,texts).to(device)
+            output = model(texts,trg).to(device)
             
             output_dim = output.shape[-1]
             output = output[0:].view(-1,output_dim)
             #print(output.argmax(dim=1))
             texts = texts.squeeze(1)
-            loss = criterion(output,texts)
+            trg = trg.squeeze(1)
+            print(('pred,',output.argmax(1)),('trg',trg))
+
+            loss = criterion(output,trg)
             loss.backward()
             optimizer.step()
         print(loss)
         losses.append(loss)
         validate(eval_data,criterion,best_acc)
-
-
 
 
 def validate(eval_data,criterion,best_acc):
@@ -218,20 +256,22 @@ def validate(eval_data,criterion,best_acc):
     correct = 0
     with torch.no_grad():
     
-        for _, texts in tqdm(enumerate(eval_data),total=200,position=0,leave=True):
+        for _, (texts,trg) in tqdm(enumerate(eval_data),total=configs.LTrain,position=0,leave=True):
 
             texts = texts.unsqueeze(1)
-
-            output = model(texts,texts,0)
+            trg = trg.unsqueeze(1)
+           
+            
+            output = model(texts,trg,0)
             output_dim = output.shape[-1]
             output = output[0:].view(-1,output_dim)
-            texts = texts.squeeze(1)
+            trg = trg.squeeze(1)
 
             pred =  output.argmax(1)
-            lossE = criterion(output,texts)
+            lossE = criterion(output,trg)
 
-            total += texts.size(0)
-            correct += (pred==texts).sum().item()
+            total += trg.size(0)
+            correct += (pred==trg).sum().item()
             #print("pred",pred)
             #print("texts",texts)
 
@@ -252,11 +292,15 @@ def validate(eval_data,criterion,best_acc):
         torch.save(model.state_dict(), './checkpoint/ckpt.pth')
         best_acc = mean_acc
 
-training(data_train,data_val)
+#print(torch.transpose(cat_training,0,1))
+#sys.exit()
+training(torch.transpose(cat_training,0,1),torch.transpose(cat_test,0,1))
 
 
+'''
 plt.plot(losses)
 plt.title('Seq2Seq Model Loss')
 plt.xlabel('Epoch')
 plt.ylabel('Loss')
 plt.show()
+'''
