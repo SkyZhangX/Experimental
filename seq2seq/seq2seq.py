@@ -35,43 +35,41 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(EncoderRNN, self).__init__()
-        self.hidden_size = hidden_size
 
+        self.hidden_size = hidden_size
         self.embedding = nn.Embedding(input_size, hidden_size)
         self.gru = nn.GRU(hidden_size, hidden_size)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input).view(1, 1, -1)
-        output = embedded
-        output, hidden = self.gru(output, hidden)
+        #output = embedded
+        output, hidden = self.gru(embedded, hidden)
+
         return output, hidden
 
     def initHidden(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
-
 
 class DecoderRNN(nn.Module):
     def __init__(self, hidden_size, output_size):
         super(DecoderRNN, self).__init__()
-        self.hidden_size = hidden_size
 
+        self.hidden_size = hidden_size
         self.embedding = nn.Embedding(output_size, hidden_size)
         self.gru = nn.GRU(hidden_size, hidden_size)
         self.out = nn.Linear(hidden_size, output_size)
-        self.softmax = nn.LogSoftmax(dim=1)
-
+       
     def forward(self, input, hidden):
+
         output = self.embedding(input).view(1, 1, -1)
         output = F.relu(output)
         output, hidden = self.gru(output, hidden)
-        #output = self.softmax(self.out(output[0]))
         output = self.out(output[0])
-        #output  = self.out(output[0])
+
         return output, hidden
 
     def initHidden(self):
         return torch.zeros(1, 1, self.hidden_size, device=device)
-
 
 class Seq2Seq(nn.Module):
     def __init__(self, encoder, decoder, device):
@@ -92,19 +90,14 @@ class Seq2Seq(nn.Module):
         trg_len = trg.shape[0]
         trg_vocab_size = len(vec)#self.decoder.output_dim
         hidden = self.encoder.initHidden()
-        # cell = self.encoder.initHidden()
         #initialize a list of output, matching input dim
         outputs = torch.zeros(trg_len, batch_size, trg_vocab_size).to(self.device)
-        
         en_outs = torch.zeros(trg_len, batch_size, trg_vocab_size).to(self.device)
         #encoder output to context vector
         
-        for ei in range(7):
-            #print(src[ei])
+        for ei in range(trg_len):
             en_out,hidden = self.encoder(src[ei],hidden)
-            #en_outs[ei] = en_out[0,0]
-        
-
+   
         #output,hidden = self.encoder(src,hidden)#,cell)
         #<sos> first in 
         input = trg[0,:]
@@ -115,27 +108,12 @@ class Seq2Seq(nn.Module):
         #outputs[6,0,1] = 1
         loss = 0
         for t in range(1,trg_len):
-            
             output, hidden= self.decoder(input, hidden)#, cell)
             outputs[t] = output
             best = output.argmax(1)
-            
             loss += criterion(output,trg[t])
             #0 for use real output, 1 for use best model output 
-            #print(trg[t])
-            
             input = trg[t] if random.random() > teacher_forcing_ratio else best
-            #sys.exit()
-            '''
-            if input[0] == 1:
-                break
-            '''
-        '''
-        print("\n")
-        print(t)
-        print(src,outputs.shape)
-        print(outputs.argmax(2))
-        '''
         
         return outputs,loss
 
@@ -188,14 +166,13 @@ cat_test =  torch.cat((data_test.unsqueeze(0),trg_test.unsqueeze(0)),dim=0)
 INPUT_DIM = len(vec)
 OUTPUT_DIM = len(vec)
 ENC_EMB_DIM = 280
-DEC_EMB_DIM = 280
 HID_DIM = 280
 N_LAYERS = 1
 ENC_DROPOUT = 0.1
 DEC_DROPOUT = 0.1
 
 
-enc = EncoderRNN(INPUT_DIM, ENC_EMB_DIM).to(device)#, HID_DIM, N_LAYERS, ENC_DROPOUT)
+enc = EncoderRNN(INPUT_DIM, HID_DIM).to(device)#, HID_DIM, N_LAYERS, ENC_DROPOUT)
 dec = DecoderRNN(HID_DIM, OUTPUT_DIM).to(device)#, HID_DIM, N_LAYERS, DEC_DROPOUT)
 
 model = Seq2Seq(enc, dec, device).to(device)
@@ -225,16 +202,14 @@ def training(data,eval_data):
             total_loss +=loss.item()
             output_dim = output.shape[-1]
             output = output[0:].view(-1,output_dim)
-            #print(output.argmax(dim=1))
+
             texts = texts.squeeze(1)
             trg = trg.squeeze(1)
             if epoch%10==0 and index in [1,2,3]:
                 print('/n')
                 print(epoch)
                 print(('pred,',output.argmax(1)),('trg',trg))
-                
-            
-              
+    
             #loss = criterion(output,trg)
             loss.backward()
             optimizer.step()
@@ -251,13 +226,11 @@ def validate(eval_data,criterion,best_acc):
     total = 0
     correct = 0
     with torch.no_grad():
-    
         for _, (texts,trg) in tqdm(enumerate(eval_data),total=configs.LTrain,position=0,leave=True):
 
             texts = texts.unsqueeze(1)
             trg = trg.unsqueeze(1)
            
-            
             output = model(texts,trg,0)
             output_dim = output.shape[-1]
             output = output[0:].view(-1,output_dim)
@@ -268,11 +241,7 @@ def validate(eval_data,criterion,best_acc):
 
             total += trg.size(0)
             correct += (pred==trg).sum().item()
-            #print("pred",pred)
-            #print("texts",texts)
 
-
-            
             epoch_loss += lossE.item()
             mean_acc = correct / total
         print(mean_acc)
@@ -281,8 +250,7 @@ def validate(eval_data,criterion,best_acc):
         print("=================================="\
                     "Current Model Saved"\
               "==================================")
-        
-        #save model to file
+
         if not os.path.isdir('checkpoint'):
           os.mkdir('checkpoint')
         torch.save(model.state_dict(), './checkpoint/ckpt.pth')
