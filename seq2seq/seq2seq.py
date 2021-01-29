@@ -22,14 +22,14 @@ from tqdm import tqdm
 import sys
 import matplotlib.pyplot as plt
 import os
-
+import nltk
 class configs:
     epoch = 100
     batch_size = 10
     lr = 0.01
     decay = 0
-    LTrain = 100
-
+    LTrain = 600
+    LTest = 300
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class EncoderRNN(nn.Module):
@@ -152,9 +152,9 @@ def load_src_data():
     trg_tokenization = tokenize(trg_f)
     decode, _   = char2vec(trg_tokenization,vec)
     train_length = configs.LTrain
+    test_length = configs.LTest
     
-  
-    return (encode[:train_length], decode[:train_length]),(encode[:train_length], decode[:train_length]), vec
+    return (encode[:train_length], decode[:train_length]),(encode[train_length:train_length+test_length], decode[train_length:train_length+test_length]), vec
 
 (data_train, trg_train),(data_test,trg_test), vec = load_src_data()
 
@@ -165,7 +165,7 @@ cat_test =  torch.cat((data_test.unsqueeze(0),trg_test.unsqueeze(0)),dim=0)
 
 INPUT_DIM = len(vec)
 OUTPUT_DIM = len(vec)
-ENC_EMB_DIM = 280
+
 HID_DIM = 280
 N_LAYERS = 1
 ENC_DROPOUT = 0.1
@@ -205,18 +205,21 @@ def training(data,eval_data):
 
             texts = texts.squeeze(1)
             trg = trg.squeeze(1)
+            '''
             if epoch%10==0 and index in [1,2,3]:
                 print('/n')
                 print(epoch)
                 print(('pred,',output.argmax(1)),('trg',trg))
-    
+            '''
             #loss = criterion(output,trg)
             loss.backward()
             optimizer.step()
         if epoch%10==0:
           print(total_loss/config.LTrain)
+        
+        print('\n Validating...')
+        validate(eval_data,criterion,best_acc)
         losses.append(loss)
-        #validate(eval_data,criterion,best_acc)
 
 
 def validate(eval_data,criterion,best_acc):
@@ -225,26 +228,41 @@ def validate(eval_data,criterion,best_acc):
     mean_acc = 0
     total = 0
     correct = 0
+    bleu_score = 0
     with torch.no_grad():
-        for _, (texts,trg) in tqdm(enumerate(eval_data),total=configs.LTrain,position=0,leave=True):
-
-            texts = texts.unsqueeze(1)
-            trg = trg.unsqueeze(1)
+        for index, (texts,trg) in tqdm(enumerate(eval_data),total=configs.LTest,position=0,leave=True):
+            
+            texts = texts.unsqueeze(1).to(device)
+            trg = trg.unsqueeze(1).to(device)
            
-            output = model(texts,trg,0)
+            output,_ = model(texts,trg)
             output_dim = output.shape[-1]
             output = output[0:].view(-1,output_dim)
             trg = trg.squeeze(1)
 
             pred =  output.argmax(1)
-            lossE = criterion(output,trg)
-
-            total += trg.size(0)
-            correct += (pred==trg).sum().item()
-
-            epoch_loss += lossE.item()
-            mean_acc = correct / total
-        print(mean_acc)
+           
+            
+           
+            correct += int(torch.equal(pred,trg))#.sum().item()
+            #print(correct)
+           
+            if index in [1,2,3]:
+                
+                print(('pred,',pred),('trg',trg))
+            
+            temp_pred = []
+            temp_trg = []
+            for i in range(len(pred)):
+                temp_pred.append(str(pred[i]))
+                temp_trg.append(str(trg[i]))
+            bleu_score += nltk.translate.bleu_score.modified_precision([temp_trg], temp_pred,1)
+        
+        total = configs.LTest
+        print(correct,total)
+        mean_acc = correct / total
+        print("prediction accuracy",mean_acc)
+        print("prediction accuracy",float(bleu_score/total))
 
     if mean_acc >best_acc :
         print("=================================="\
@@ -255,6 +273,6 @@ def validate(eval_data,criterion,best_acc):
           os.mkdir('checkpoint')
         torch.save(model.state_dict(), './checkpoint/ckpt.pth')
         best_acc = mean_acc
-
+    return
 
 training(torch.transpose(cat_training,0,1),torch.transpose(cat_test,0,1))
