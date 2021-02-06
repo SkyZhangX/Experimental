@@ -24,12 +24,12 @@ import matplotlib.pyplot as plt
 import os
 import nltk
 class configs:
-    epoch = 100
+    epoch = 500
     batch_size = 10
-    lr = 0.01
+    lr = 0.005
     decay = 0
-    LTrain = 600
-    LTest = 300
+    LTrain = 1000
+    LTest = 200
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class EncoderRNN(nn.Module):
@@ -141,13 +141,13 @@ def tokenize(token: list) -> list:
     return new_data
 
 def load_src_data():
-    data_file = 'samples.txt'
+    data_file = 'samples1200.txt'
    
     data_f = open(data_file,'r').readlines()
     data_tokenization = tokenize(data_f)
     encode, vec = char2vec(data_tokenization)
 
-    trg_file = 'target.txt'
+    trg_file = 'target1200.txt'
     trg_f = open(trg_file,'r').readlines()
     trg_tokenization = tokenize(trg_f)
     decode, _   = char2vec(trg_tokenization,vec)
@@ -217,8 +217,10 @@ def training(data,eval_data):
         if epoch%10==0:
           print(total_loss/config.LTrain)
         
-        print('\n Validating...')
-        validate(eval_data,criterion,best_acc)
+        #print('\n Validating...')
+        if epoch%10==0:
+            print('\n Validating...')
+            validate(eval_data,criterion,best_acc)
         losses.append(loss)
 
 
@@ -261,8 +263,8 @@ def validate(eval_data,criterion,best_acc):
         total = configs.LTest
         print(correct,total)
         mean_acc = correct / total
-        print("prediction accuracy",mean_acc)
-        print("prediction accuracy",float(bleu_score/total))
+        print("Pred accuracy",mean_acc)
+        print("BLEU accuracy",float(bleu_score/total))
 
     if mean_acc >best_acc :
         print("=================================="\
